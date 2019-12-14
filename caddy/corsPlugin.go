@@ -1,7 +1,6 @@
 package caddy
 
 import (
-	"log"
 	"net/http"
 	"regexp"
 	"strconv"
@@ -22,9 +21,6 @@ type CorsRule struct {
 }
 
 func init() {
-	caddy.Log().Warn("****found")
-	log.Println("**** found")
-
 	caddy.RegisterModule(Middleware{})
 	httpcaddyfile.RegisterHandlerDirective("cors", parseCaddyfile)
 }
