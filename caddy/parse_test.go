@@ -1,9 +1,11 @@
 package caddy
 
 import (
-	"github.com/caddyserver/caddy"
+	"io"
 	"reflect"
 	"testing"
+
+	"github.com/caddyserver/caddy/v2"
 )
 
 func TestParse_OneLines(t *testing.T) {
@@ -43,6 +45,23 @@ func TestParse_OneLines(t *testing.T) {
 	}
 }
 
+// allTokens lexes the entire input, but does not parse it.
+// It returns all the tokens from the input, unstructured
+// and in order.
+func allTokens(filename string, input io.Reader) ([]Token, error) {
+	l := new(caddy.lexer)
+	err := l.load(input)
+	if err != nil {
+		return nil, err
+	}
+	var tokens []Token
+	for l.next() {
+		l.token.File = filename
+		tokens = append(tokens, l.token)
+	}
+	return tokens, nil
+}
+
 func TestFull(t *testing.T) {
 	conf := `cors {
   origin http://foo.com
@@ -53,6 +72,8 @@ func TestFull(t *testing.T) {
   exposed_headers X-SECRET
   origin http://bar.com
 }`
+
+	caddy.Disp
 	c := caddy.NewTestController("http", conf)
 	rules, err := parseRules(c)
 	if err != nil {

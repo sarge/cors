@@ -6,52 +6,60 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/captncraig/cors"
+	"github.com/captncraig/cors/v2"
 
-	"github.com/caddyserver/caddy"
-	"github.com/caddyserver/caddy/caddyhttp/httpserver"
+	"github.com/caddyserver/caddy/v2"
+	"github.com/caddyserver/caddy/v2/caddyconfig/caddyfile"
+	"github.com/caddyserver/caddy/v2/caddyconfig/httpcaddyfile"
+	"github.com/caddyserver/caddy/v2/modules/caddyhttp"
 )
 
-type corsRule struct {
+// CorsRule stores the parsed rules
+type CorsRule struct {
 	Conf *cors.Config
 	Path string
 }
 
 func init() {
-	caddy.RegisterPlugin("cors", caddy.Plugin{
-		ServerType: "http",
-		Action:     setup,
-	})
+	caddy.RegisterModule(Middleware{})
+	httpcaddyfile.RegisterHandlerDirective("cors", parseCaddyfile)
 }
 
-func setup(c *caddy.Controller) error {
-	rules, err := parseRules(c)
-	if err != nil {
-		return err
+// Middleware implements an HTTP handler that writes directs the requests
+// made with an upper case prefix to a lower case version
+type Middleware struct {
+	Rules []*CorsRule `json:"rules,omitempty"`
+}
+
+// CaddyModule returns the Caddy module information.
+func (Middleware) CaddyModule() caddy.ModuleInfo {
+	return caddy.ModuleInfo{
+		ID:  "http.handlers.cors",
+		New: func() caddy.Module { return new(Middleware) },
 	}
-	siteConfig := httpserver.GetConfig(c)
-	siteConfig.AddMiddleware(func(next httpserver.Handler) httpserver.Handler {
-		return httpserver.HandlerFunc(func(w http.ResponseWriter, r *http.Request) (int, error) {
-			for _, rule := range rules {
-				if httpserver.Path(r.URL.Path).Matches(rule.Path) {
-					rule.Conf.HandleRequest(w, r)
-					if cors.IsPreflight(r) {
-						return 200, nil
-					}
-					break
-				}
-			}
-			return next.ServeHTTP(w, r)
-		})
-	})
-	return nil
 }
 
-func parseRules(c *caddy.Controller) ([]*corsRule, error) {
-	rules := []*corsRule{}
+// ServeHTTP implements caddyhttp.MiddlewareHandler.
+func (m Middleware) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddyhttp.Handler) error {
+
+	for _, rule := range m.Rules {
+		if strings.HasPrefix(strings.ToLower(r.URL.Path), rule.Path) {
+			rule.Conf.HandleRequest(w, r)
+			if cors.IsPreflight(r) {
+				w.WriteHeader(200)
+				return nil
+			}
+			break
+		}
+	}
+	return next.ServeHTTP(w, r)
+}
+
+// UnmarshalCaddyfile implements caddyfile.Unmarshaler.
+func (m *Middleware) UnmarshalCaddyfile(c *caddyfile.Dispenser) error {
 
 	for c.Next() {
-		rule := &corsRule{Path: "/", Conf: cors.Default()}
+		rule := &CorsRule{Path: "/", Conf: cors.Default()}
 		args := c.RemainingArgs()
 
 		anyOrigins := false
@@ -65,7 +73,8 @@ func parseRules(c *caddy.Controller) ([]*corsRule, error) {
 			rule.Conf.AllowedOrigins = append(rule.Conf.AllowedOrigins, strings.Split(args[i], ",")...)
 			anyOrigins = true
 		}
-		for c.NextBlock() {
+
+		for c.NextBlock(0) {
 			switch c.Val() {
 			case "origin":
 				if !anyOrigins {
@@ -76,76 +85,95 @@ func parseRules(c *caddy.Controller) ([]*corsRule, error) {
 					rule.Conf.AllowedOrigins = append(rule.Conf.AllowedOrigins, strings.Split(domain, ",")...)
 				}
 				anyOrigins = true
+
 			case "origin_regexp":
-				if arg, err := singleArg(c, "origin_regexp"); err != nil {
-					return nil, err
-				} else {
-					r, err := regexp.Compile(arg)
-
-					if err != nil {
-						return nil, c.Errf("could no compile regexp: %s", err)
-					}
-
-					if !anyOrigins {
-						rule.Conf.AllowedOrigins = nil
-						anyOrigins = true
-					}
-
-					rule.Conf.OriginRegexps = append(rule.Conf.OriginRegexps, r)
+				arg, err := singleArg(c, "origin_regexp")
+				if err != nil {
+					return err
 				}
+				r, err := regexp.Compile(arg)
+
+				if err != nil {
+					return c.Errf("could no compile regexp: %s", err)
+				}
+
+				if !anyOrigins {
+					rule.Conf.AllowedOrigins = nil
+					anyOrigins = true
+				}
+
+				rule.Conf.OriginRegexps = append(rule.Conf.OriginRegexps, r)
+
 			case "methods":
-				if arg, err := singleArg(c, "methods"); err != nil {
-					return nil, err
-				} else {
-					rule.Conf.AllowedMethods = arg
+				arg, err := singleArg(c, "methods")
+				if err != nil {
+					return err
 				}
+				rule.Conf.AllowedMethods = arg
 			case "allow_credentials":
-				if arg, err := singleArg(c, "allow_credentials"); err != nil {
-					return nil, err
-				} else {
-					var b bool
-					if arg == "true" {
-						b = true
-					} else if arg != "false" {
-						return nil, c.Errf("allow_credentials must be true or false.")
-					}
-					rule.Conf.AllowCredentials = &b
+				arg, err := singleArg(c, "allow_credentials")
+				if err != nil {
+					return err
 				}
+				var b bool
+				if arg == "true" {
+					b = true
+				} else if arg != "false" {
+					return c.Errf("allow_credentials must be true or false.")
+				}
+				rule.Conf.AllowCredentials = &b
+
 			case "max_age":
-				if arg, err := singleArg(c, "max_age"); err != nil {
-					return nil, err
-				} else {
-					i, err := strconv.Atoi(arg)
-					if err != nil {
-						return nil, c.Err("max_age must be valid int")
-					}
-					rule.Conf.MaxAge = i
+				arg, err := singleArg(c, "max_age")
+				if err != nil {
+					return err
 				}
+				i, err := strconv.Atoi(arg)
+				if err != nil {
+					return c.Err("max_age must be valid int")
+				}
+				rule.Conf.MaxAge = i
+
 			case "allowed_headers":
-				if arg, err := singleArg(c, "allowed_headers"); err != nil {
-					return nil, err
-				} else {
-					rule.Conf.AllowedHeaders = arg
+				arg, err := singleArg(c, "allowed_headers")
+				if err != nil {
+					return err
 				}
+				rule.Conf.AllowedHeaders = arg
 			case "exposed_headers":
-				if arg, err := singleArg(c, "exposed_headers"); err != nil {
-					return nil, err
-				} else {
-					rule.Conf.ExposedHeaders = arg
+				arg, err := singleArg(c, "exposed_headers")
+				if err != nil {
+					return err
 				}
+				rule.Conf.ExposedHeaders = arg
+
 			default:
-				return nil, c.Errf("Unknown cors config item: %s", c.Val())
+				return c.Errf("Unknown cors config item: %s", c.Val())
 			}
 		}
-		rules = append(rules, rule)
+		m.Rules = append(m.Rules, rule)
 	}
-	return rules, nil
+
+	return nil
 }
 
-func singleArg(c *caddy.Controller, desc string) (string, error) {
+func singleArg(c *caddyfile.Dispenser, desc string) (string, error) {
 	args := c.RemainingArgs()
 	if len(args) != 1 {
 		return "", c.Errf("%s expects exactly one argument", desc)
 	}
 	return args[0], nil
 }
+
+// parseCaddyfile unmarshals tokens from h into a new Middleware.
+func parseCaddyfile(h httpcaddyfile.Helper) (caddyhttp.MiddlewareHandler, error) {
+	var m Middleware
+	err := m.UnmarshalCaddyfile(h.Dispenser)
+	return m, err
+}
+
+// Interface guards
+var (
+	_ caddyhttp.MiddlewareHandler = (*Middleware)(nil)
+	_ caddyfile.Unmarshaler       = (*Middleware)(nil)
+)
