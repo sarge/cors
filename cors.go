@@ -21,6 +21,7 @@ const (
 	options           = "OPTIONS"
 )
 
+// Config stores the intended behaviour
 type Config struct {
 	AllowedOrigins   []string
 	OriginRegexps    []*regexp.Regexp
@@ -31,6 +32,7 @@ type Config struct {
 	MaxAge           int
 }
 
+// Default configuration
 func Default() *Config {
 	return &Config{
 		AllowedOrigins:   []string{"*"},
@@ -43,7 +45,7 @@ func Default() *Config {
 	}
 }
 
-// Read the request, setting response headers as appropriate.
+// HandleRequest - Read the request, setting response headers as appropriate.
 // Will NOT write anything to response in any circumstances.
 func (c *Config) HandleRequest(w http.ResponseWriter, r *http.Request) {
 	requestOrigin := r.Header.Get(originKey)
@@ -97,6 +99,7 @@ func (c *Config) HandleRequest(w http.ResponseWriter, r *http.Request) {
 
 }
 
+// IsPreflight will check if this is an options request
 func IsPreflight(r *http.Request) bool {
 	return r.Method == options && r.Header.Get(requestMethodKey) != ""
 }

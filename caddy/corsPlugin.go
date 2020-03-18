@@ -46,7 +46,7 @@ func (m Middleware) ServeHTTP(w http.ResponseWriter, r *http.Request, next caddy
 		if strings.HasPrefix(strings.ToLower(r.URL.Path), rule.Path) {
 			rule.Conf.HandleRequest(w, r)
 			if cors.IsPreflight(r) {
-				w.WriteHeader(200)
+				w.WriteHeader(204)
 				return nil
 			}
 			break
